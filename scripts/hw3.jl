@@ -5,43 +5,26 @@ using StaticArrays: SA
 using Statistics: mean
 using BenchmarkTools: @btime, @benchmark
 using Statistics
+using StaticArrays
 
-##############
-# Instructions
-##############
-#=
 
-This starter code is here to show examples of how to use the HW3 code that you
-can copy and paste into your homework code if you wish. It is not meant to be a
-fill-in-the blank skeleton code, so the structure of your final submission may
-differ from this considerably.
-
-Please make sure to update DMUStudent to gain access to the HW3 module.
-
-=#
-
-############
+############################################################
 # Question 2
-############
+############################################################
 
-function rollout_q2(mdp, policy_function, s0, max_steps=100)
-    # fill this in with code from the assignment document
+function rollout_q2(mdp, policy_function, s, max_steps=100)
     r_total = 0.0 
     t = 0 
-    s = s0
-
     while !isterminal(mdp, s) && t < max_steps
         a = policy_function(mdp, s)
         s, r = @gen(:sp,:r)(mdp, s, a) 
         r_total += discount(m)^t*r 
         t += 1
     end
-
     return r_total
 end
 
 function random_policy(m, s)
-    # put a smarter heuristic policy here
     return rand(actions(m))
 end
 
@@ -63,26 +46,19 @@ function heuristic_policy(m, s)
 end
 
 m = HW3.DenseGridWorld(seed=3)
-# This code runs monte carlo simulations: you can calculate the mean and standard error from the results
-results = [rollout_q2(m, random_policy, rand(initialstate(m))) for _ in 1:500]
-@show mean_reward = mean(results)
-@show SEM = std(results) / sqrt(length(results))
-
-m = HW3.DenseGridWorld(seed=3)
-# This code runs monte carlo simulations: you can calculate the mean and standard error from the results
-results = [rollout_q2(m, heuristic_policy, rand(initialstate(m))) for _ in 1:500]
-@show mean_results = mean(results)
-@show SEM = std(results) / sqrt(length(results))
+println("# Q2a) Monte Carlo Evaluation - Random Policy")
+results = [rollout_q2(m, random_policy, rand(initialstate(m))) for _ in 1:400]
+@show mean_discounted_reward_estimate = mean(results)
+@show standard_error_mean = std(results) / sqrt(length(results))
+println("# Q2b) Monte Carlo Evaluation - Heuristic Policy")
+results = [rollout_q2(m, heuristic_policy, rand(initialstate(m))) for _ in 1:400]
+@show mean_discounted_reward_estimate = mean(results)
+@show standard_error_mean = std(results) / sqrt(length(results))
 
 
-
-
-
-
-
-############
+############################################################
 # Question 3
-############
+############################################################
 
 function select_action(mdp, s, d, π₀, Q, N, T, t)
     simulate!(mdp, s, d, π₀, Q, N, T, t)
@@ -106,8 +82,7 @@ function simulate!(mdp, s, d, π₀, Q, N, T, t)
     a = explore(mdp, s, Q, N)
     sp, r = @gen(:sp,:r)(mdp, s, a)
 
-    t_key = (s, a, sp)
-    t[t_key] = get(t, t_key, 0) + 1
+    t[(s, a, sp)] = get(t, (s, a, sp), 0) + 1
 
     q = r + discount(m) * simulate!(mdp, sp, d - 1, π₀, Q, N, T, t)
     N[(s, a)] += 1
@@ -127,39 +102,27 @@ end
 function rollout_loop(mdp, s, d, π₀)
     r_total = 0.0
     discount_factor = 1.0
-    current_state = s
-    
-    for current_depth in 1:d
-        if isterminal(mdp, current_state)
+    mdp_discount = discount(mdp)
+    for depth in 1:d
+        if isterminal(mdp, s)
             break
         end
         
-        a = π₀(mdp, current_state)
-        sp, r = @gen(:sp, :r)(mdp, current_state, a)
-        
+        a = π₀(mdp, s)
+        s, r = @gen(:sp, :r)(mdp, s, a)
         r_total += discount_factor * r
-        discount_factor *= discount(mdp)
-        current_state = sp
+        discount_factor *= mdp_discount
     end
-    
     return r_total
 end
 
 function explore(mdp, s, Q, N)
     c = sqrt(2)
-    As = actions(mdp, s)
-    
-    if all(a -> (s, a) ∉ keys(N), As)
-        return rand(As)
-    end
-
+    A = actions(mdp, s)
+    bonus(Nsa, Ns) = Nsa == 0 ? Inf : sqrt(log(Ns)/Nsa)
     # total visits
-    Ns = sum([N[(s, a)] for a in As if (s, a) in keys(N)])
-
-    ucb_values = [(a, ((s, a) in keys(N) && N[(s, a)] > 0) ? 
-        Q[(s, a)] / N[(s, a)] + c * sqrt(2 * log(Ns) / N[(s, a)]) : Inf) for a in As]
-
-    return maximum(ucb_values)[1]
+    Ns = sum(N[(s,a)] for a in A)
+    return argmax(a -> Q[(s,a)] + c * bonus(N[(s,a)], Ns), A)
 end
 
 # running q3
@@ -168,14 +131,83 @@ n = Dict{Tuple{statetype(m), actiontype(m)}, Int}()
 q = Dict{Tuple{statetype(m), actiontype(m)}, Float64}()
 T = Set{statetype(m)}()
 t = Dict{Tuple{statetype(m), actiontype(m), statetype(m)}, Int}()
-
-# Example usage:
-s0 = SA[19, 19]
-max_depth = 7
+s = SA[19, 19]
+max_depth = 50
 max_iters = 7
 π₀ = heuristic_policy
-    for i in 1:max_iters
-        select_action(m, s0, max_depth, π₀, q, n, T, t)
-    end
-inchrome(visualize_tree(q, n, t, s0))
+for i in 1:max_iters
+    select_action(m, s, max_depth, π₀, q, n, T, t)
+end
+inchrome(visualize_tree(q, n, t, s))
 
+
+############################################################
+# Question 4
+############################################################
+
+# A starting point for the MCTS select_action function which can be used for Questions 4 and 5
+function select_action_q4(mdp, s)
+
+    start = time_ns()
+    n = Dict{Tuple{statetype(m), actiontype(m)}, Int}()
+    q = Dict{Tuple{statetype(m), actiontype(m)}, Float64}()
+    T = Set{statetype(m)}()
+    t = Dict{Tuple{statetype(m), actiontype(m), statetype(m)}, Int}()
+
+    max_depth = 50
+    π₀ = heuristic_policy
+
+    # for _ in 1:1000
+    while time_ns() < start + 40_000_000 # you can replace the above line with this if you want to limit this loop to run within 40ms
+        simulate!(mdp, s, max_depth, π₀, q, n, T, t)
+    end
+
+    # select a good action based on q and/or n
+    return explore(mdp, s, q, n)
+end
+
+m4 = DenseGridWorld(seed=4)
+@btime select_action_q4(m, SA[35,35]) # you can use this to see how much time your function takes to run. A good time is 10-20ms.
+
+
+function evaluate_mcts_planner(mdp, num_simulations=100, steps_per_simulation=100)
+    total_rewards = Float64[]
+
+    for _ in 1:num_simulations
+        s = SA[35,35]
+        r_total = 0.0
+        
+        for _ in 1:steps_per_simulation
+            if isterminal(mdp, s)
+                break
+            end
+            
+            a = select_action_q4(mdp, s)
+            s, r = @gen(:sp, :r)(mdp, s, a)
+            r_total += r 
+        end
+        
+        push!(total_rewards, r_total)
+    end
+    
+    mean_reward = mean(total_rewards)
+    sem = std(total_rewards) / sqrt(length(total_rewards))  # Standard Error of the Mean
+    
+    println("# Q4) Planning with MCTS")
+    println("mean_discounted_reward_estimate: $mean_reward")
+    println("SEM: $sem")
+end
+
+m4 = DenseGridWorld(seed=4)
+evaluate_mcts_planner(m4)
+
+
+
+
+# ############
+# # Question 5
+# ############
+m4 = DenseGridWorld(seed=4)
+HW3.evaluate(select_action_q4, "son.pham-2@colorado.edu", time=true)
+
+# # If you want to see roughly what's in the evaluate function (with the timing code removed), check sanitized_evaluate.jl
