@@ -27,3 +27,4 @@ docs/site/
 Manifest.toml
 
 .DS_Store
+results*.json
